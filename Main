@@ -1,0 +1,624 @@
+REPORT ZRSDSD525 MESSAGE-ID zsd.
+***********************************************************************
+* Copyright    : Innatech Co., Ltd.
+* Program Name : ZRSDSD525
+* Author       : Paul Tsai
+* Create Date  : 2023/03/31
+* Description  : 家樂福發票匯出TXT
+***********************************************************************
+INCLUDE zbdcrecx2.
+INCLUDE zrsdsd525top.
+***********************************************************************
+* INITIALIZATION
+***********************************************************************
+INITIALIZATION.
+    GET PARAMETER ID 'VKO' FIELD: s_vkorg-low.
+    GET PARAMETER ID 'SPA' FIELD: s_spart-low.
+
+    "Date Default Value
+    w_temp = sy-datum.
+    w_temp+6(2) = '01'.
+    w_fday = w_temp.
+    CALL FUNCTION 'RP_LAST_DAY_OF_MONTHS'
+      EXPORTING
+        day_in = w_fday
+      IMPORTING
+        last_day_of_month = w_lday.
+
+    s_fkdat-low = w_fday.
+    s_fkdat-high = w_lday.
+    APPEND s_fkdat.
+
+***********************************************************************
+*AT SELECTION SCREEN
+***********************************************************************
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+    PERFORM select_dir USING p_file.
+***********************************************************************
+* Start-of-selection PAUL
+***********************************************************************
+START-OF-SELECTION.
+
+    PERFORM read_data.
+
+    IF s_rec IS NOT INITIAL.
+        DELETE t_vbrk WHERE rec NOT IN s_rec.
+    ENDIF.
+
+    IF s_sales IS NOT INITIAL.
+        DELETE t_vbrk WHERE sales NOT IN s_sales.
+    ENDIF.
+
+    PERFORM process_data.
+***********************************************************************
+* End-of-selection PAUL
+***********************************************************************
+END-OF-SELECTION.
+    IF t_vbrk[] IS INITIAL.
+        MESSAGE s999.
+
+    ELSE.
+        IF t_output[] IS NOT INITIAL.
+            PERFORM print_data.
+        ENDIF.
+
+        WRITE: / '共', w_all, '筆，成功', w_suc, '筆，', '失敗', w_err, '筆', /.
+        CLEAR wa_msg.
+        READ TABLE t_msg INTO wa_msg WITH KEY type = 'S'.
+        IF wa_msg IS NOT INITIAL.
+            WRITE: / '成功: '.
+        ENDIF.
+
+        CLEAR wa_msg.
+        LOOP AT t_msg INTO wa_msg WHERE type = 'S'.
+            WRITE: / '          發票號碼: ', wa_msg-xblnr, '已成功匯出'.
+
+            AT LAST.
+                WRITE: /, / '成功匯出檔名: ', w_filepath, /.
+            ENDAT.
+        ENDLOOP.
+
+        CLEAR wa_msg.
+        READ TABLE t_msg INTO wa_msg WITH KEY type = 'E'.
+        IF wa_msg IS NOT INITIAL.
+            WRITE: / '失敗: '.
+        ENDIF.
+        CLEAR wa_msg.
+        LOOP AT t_msg INTO wa_msg WHERE type = 'E' AND posnr IS INITIAL.
+            WRITE: / '          發票號碼', wa_msg-xblnr, wa_msg-message, '無法匯出'.
+
+            LOOP AT t_msg INTO wa_msg WHERE vbeln = wa_msg-vbeln AND posnr IS NOT INITIAL.
+                WRITE: / '               物料', wa_msg-matnr, wa_msg-message.
+            ENDLOOP.
+        ENDLOOP.
+    ENDIF.
+*&---------------------------------------------------------------------*
+*& Form read_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM read_data .
+    SELECT msehi mseh3 INTO CORRESPONDING FIELDS OF TABLE t_t006a FROM t006a WHERE spras = sy-langu.
+    SELECT addrnumber name1 post_code1 city1 street INTO CORRESPONDING FIELDS OF TABLE t_adrc
+      FROM adrc.
+    SELECT bukrs adrnr INTO CORRESPONDING FIELDS OF TABLE t_t001 FROM t001.
+    SELECT addrnumber tel_number INTO CORRESPONDING FIELDS OF TABLE t_adr2 FROM adr2.
+    SELECT bukrs stcd1 represn adrnr INTO CORRESPONDING FIELDS OF TABLE t_j FROM j_1bbranch.
+    SELECT vbeln bstkd INTO CORRESPONDING FIELDS OF TABLE t_vbkd FROM vbkd.
+    SELECT knumv kschl mwsk1 INTO CORRESPONDING FIELDS OF TABLE t_prcd FROM prcd_elements.
+    SELECT vbeln parvw kunnr adrnr INTO CORRESPONDING FIELDS OF TABLE t_vbpa FROM vbpa.
+    SELECT partner taxtype taxnum INTO CORRESPONDING FIELDS OF TABLE t_dfkkbptaxnum FROM dfkkbptaxnum.
+    SELECT matnr ean11 INTO CORRESPONDING FIELDS OF TABLE t_mara FROM mara.
+    SELECT vkorg bukrs INTO CORRESPONDING FIELDS OF TABLE t_tvko FROM tvko.
+
+    SELECT k~vbeln k~taxk1 k~xblnr k~zrdcod k~fkdat k~netwr k~mwsbk k~zvatno p~aubel k~bupla k~knumv k~fksto k~sfakn k~waerk
+      INTO CORRESPONDING FIELDS OF TABLE t_vbrk
+      FROM vbrk AS k JOIN vbrp AS p ON k~vbeln = p~vbeln
+      WHERE k~vkorg IN s_vkorg AND k~vtweg IN s_vtweg AND k~spart IN s_spart
+      AND p~vkbur IN s_vkbur AND k~fkart IN s_fkart AND k~fkdat IN s_fkdat
+      AND k~vbeln IN s_vbeln AND k~xblnr IN s_xblnr AND k~kunrg IN s_kunrg
+      AND k~kunag IN s_kunag AND k~ernam IN s_ernam AND k~erdat IN s_erdat
+      AND ( k~vbtyp = 'M' OR k~vbtyp = 'P' ).
+    DELETE t_vbrk WHERE fksto IS NOT INITIAL.
+    DELETE t_vbrk WHERE sfakn IS NOT INITIAL.
+    SORT t_vbrk BY vbeln.
+    DELETE ADJACENT DUPLICATES FROM t_vbrk COMPARING vbeln.
+
+    SORT t_vbrk BY vbeln.
+    DELETE ADJACENT DUPLICATES FROM t_vbrk COMPARING vbeln.
+
+    IF t_vbrk[] IS NOT INITIAL.
+        SELECT vbeln posnr matnr arktx fkimg vrkme netwr INTO CORRESPONDING FIELDS OF TABLE t_vbrp
+          FROM vbrp FOR ALL ENTRIES IN t_vbrk
+          WHERE vbeln = t_vbrk-vbeln.
+        DELETE t_vbrp WHERE posnr+0(1) = '9'.
+    ENDIF.
+
+    SORT t_vbrp BY vbeln posnr.
+
+    PERFORM get_desc.
+
+    DELETE t_vbrp WHERE delete = 'X'.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_desc
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM get_desc .
+    CLEAR wa_vbrk.
+    LOOP AT t_vbrk INTO wa_vbrk.
+
+        IF wa_vbrk-xblnr+0(2) NA sy-abcde.
+            IF wa_vbrk-xblnr+2(8) CN '0123456789'.
+                CONTINUE.
+            ENDIF.
+        ENDIF.
+
+        IF wa_vbrk-waerk <> 'TWD'.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+            CLEAR wa_msg.
+            wa_msg-xblnr = wa_vbrk-xblnr.
+            wa_msg-message = '此Billing幣別不為台幣'.
+            wa_msg-type = 'E'.
+            APPEND wa_msg TO t_msg.
+            CONTINUE.
+        ENDIF.
+
+        IF wa_vbrk-zrdcod IS INITIAL.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+            CLEAR wa_msg.
+            wa_msg-vbeln = wa_vbrk-vbeln.
+            wa_msg-xblnr = wa_vbrk-xblnr.
+            wa_msg-message = '無發票檢查碼'.
+            wa_msg-type = 'E'.
+            APPEND wa_msg TO t_msg.
+            CONTINUE.
+        ENDIF.
+
+        "銷售金額橋正
+        wa_vbrk-netwr = wa_vbrk-netwr * 100.
+
+        "總金額
+        wa_vbrk-sum = wa_vbrk-netwr + wa_vbrk-mwsbk.
+
+        "受票人名稱
+        CLEAR wa_vbpa.
+        READ TABLE t_vbpa INTO wa_vbpa WITH KEY vbeln = wa_vbrk-vbeln parvw = 'RE'.
+        wa_vbrk-rec = wa_vbpa-kunnr.
+        CLEAR wa_adrc.
+        READ TABLE t_adrc INTO wa_adrc WITH KEY addrnumber = wa_vbpa-adrnr.
+        wa_vbrk-name1 = wa_adrc-name1.
+        CONCATENATE wa_adrc-post_code1 wa_adrc-city1 wa_adrc-street INTO wa_vbrk-street.
+
+        CLEAR wa_vbkd.
+        READ TABLE t_vbkd INTO wa_vbkd WITH KEY vbeln = wa_vbrk-aubel.
+        wa_vbrk-bstkd = wa_vbkd-bstkd.
+
+        CLEAR wa_j.
+        READ TABLE t_j INTO wa_j WITH KEY bukrs = wa_vbrk-bupla.
+        IF wa_j IS NOT INITIAL.
+            wa_vbrk-stcd1 = wa_j-stcd1.
+        ELSE.
+            w_err = w_err + 1.
+            CLEAR wa_msg.
+            wa_msg-vbeln = wa_vbrk-vbeln.
+            wa_msg-xblnr = wa_vbrk-xblnr.
+            wa_msg-message = '無發票人統一編號'.
+            wa_msg-type = 'E'.
+            APPEND wa_msg TO t_msg.
+            CONTINUE.
+        ENDIF.
+
+        wa_vbrk-represn = wa_j-represn.
+        CLEAR wa_adrc.
+        READ TABLE t_adrc INTO wa_adrc WITH KEY addrnumber = wa_j-adrnr.
+        wa_vbrk-name2 = wa_adrc-name1.
+        CONCATENATE wa_adrc-post_code1 wa_adrc-city1 wa_adrc-street INTO wa_vbrk-street2.
+
+        CLEAR wa_vbpa.
+        READ TABLE t_vbpa INTO wa_vbpa WITH KEY vbeln = wa_vbrk-vbeln parvw = 'AF'.
+        wa_vbrk-sales = wa_vbpa-kunnr.
+        CLEAR wa_adrc.
+        READ TABLE t_adrc INTO wa_adrc WITH KEY addrnumber = wa_vbpa-adrnr.
+        wa_vbrk-name3 = wa_adrc-name1.
+
+        CLEAR: w_count, wa_vbrp.
+        LOOP AT t_vbrp INTO wa_vbrp WHERE vbeln = wa_vbrk-vbeln.
+            w_count = w_count + 1.
+            wa_vbrp-number = w_count.
+            MODIFY t_vbrp FROM wa_vbrp.
+        ENDLOOP.
+
+        MODIFY t_vbrk FROM wa_vbrk.
+    ENDLOOP.
+
+    CLEAR wa_vbrp.
+    LOOP AT t_vbrp INTO wa_vbrp.
+        CLEAR wa_mara.
+        READ TABLE t_mara INTO wa_mara WITH KEY matnr = wa_vbrp-matnr.
+        IF wa_mara-ean11 IS NOT INITIAL.
+            wa_vbrp-ean11 = wa_mara-ean11.
+        ELSE.
+            wa_vbrp-delete = 'X'.
+            MODIFY t_vbrp FROM wa_vbrp.
+
+            CLEAR wa_msg.
+            wa_msg-vbeln = wa_vbrp-vbeln.
+            wa_msg-posnr = wa_vbrp-posnr.
+            wa_msg-matnr = wa_vbrp-matnr.
+            wa_msg-message = 'EAN號碼為空白'.
+            wa_msg-type = 'E'.
+            APPEND wa_msg TO t_msg.
+            CONTINUE.
+        ENDIF.
+
+        "橋正
+        wa_vbrp-netwr = wa_vbrp-netwr * 100.
+
+        IF wa_vbrp-netwr = 0 AND wa_vbrp-fkimg = 0.
+            wa_vbrp-netpr = 0.
+        ELSE.
+            wa_vbrp-netpr = wa_vbrp-netwr / wa_vbrp-fkimg.
+        ENDIF.
+
+        CLEAR wa_t006a.
+        READ TABLE t_t006a INTO wa_t006a WITH KEY msehi = wa_vbrp-vrkme.
+        wa_vbrp-mseh3 = wa_t006a-mseh3.
+
+
+        MODIFY t_vbrp FROM wa_vbrp.
+    ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form process_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM process_data .
+
+    CLEAR: wa_vbrk, wa_head.
+    LOOP AT t_vbrk INTO wa_vbrk.
+
+        "確認明細中沒有錯誤
+        CLEAR wa_msg.
+        READ TABLE t_msg INTO wa_msg WITH KEY vbeln = wa_vbrk-vbeln.
+        IF wa_msg IS NOT INITIAL.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+
+            CLEAR wa_msg.
+            wa_msg-vbeln = wa_vbrk-vbeln.
+            wa_msg-xblnr = wa_vbrk-xblnr.
+            wa_msg-message = '明細有誤'.
+            wa_msg-type = 'E'.
+            APPEND wa_msg TO t_msg.
+            CONTINUE.
+        ENDIF.
+
+        "紀錄別
+        wa_head-record = 'T1'.
+        "扣抵代號
+        wa_head-no1 = '1'.
+        "發票種類
+        wa_head-no2 = '1'.
+        "發票別
+        wa_head-recno = 'O'.
+        "店別
+        wa_head-shop = '4717546900102'.
+        "參考文件代號
+        wa_head-no4 = 'PO '.
+        "發票人
+        wa_head-rec_man = '4710200900012'.
+       "格式代號
+        IF wa_vbrk-taxk1 = '3'.
+            wa_head-format = '電子'.
+        ELSE.
+            wa_head-format = '手開'.
+        ENDIF.
+        "發票號碼
+        wa_head-xblnr = wa_vbrk-xblnr.
+        "發票檢查碼
+*        wa_head-exam = wa_vbrk-zrdcod.
+        CONCATENATE wa_vbrk-zrdcod ' ' INTO wa_head-exam RESPECTING BLANKS.
+        "發票日期
+        wa_head-rec_date = wa_vbrk-fkdat.
+        "銷售金額
+        PERFORM convert_number USING wa_vbrk-netwr wa_head-price.
+*        wa_head-price = wa_vbrk-netwr.
+        IF strlen( wa_head-price ) < 12.
+            PERFORM fill_currency USING wa_head-price 12.
+        ENDIF.
+        "稅率別
+        IF wa_vbrk-mwsbk <> 0.
+            wa_head-tax_rate = '1'.
+        ELSE.
+            CLEAR wa_prcd.
+            READ TABLE t_prcd INTO wa_prcd WITH KEY knumv = wa_vbrk-knumv kschl = 'MWSI'.
+            IF wa_prcd-mwsk1 IS NOT INITIAL.
+                IF wa_prcd-mwsk1 = 'S9'.
+                    wa_head-tax_rate = '2'.
+                ELSEIF wa_prcd-mwsk1 = 'S0'.
+                    wa_head-tax_rate = '3'.
+                ELSE.
+                    wa_head-tax_rate = ' '.
+                ENDIF.
+            ELSE.
+                CLEAR wa_prcd.
+                READ TABLE t_prcd INTO wa_prcd WITH KEY knumv = wa_vbrk-knumv kschl = 'MWST'.
+                IF wa_prcd-mwsk1 IS NOT INITIAL.
+                    IF wa_prcd-mwsk1 = 'S9'.
+                        wa_head-tax_rate = '2'.
+                    ELSEIF wa_prcd-mwsk1 = 'S0'.
+                        wa_head-tax_rate = '3'.
+                    ENDIF.
+                ELSE.
+                    wa_head-tax_rate = ' '.
+                ENDIF.
+            ENDIF.
+        ENDIF.
+        "營業稅額
+        PERFORM convert_number USING wa_vbrk-mwsbk wa_head-tax.
+*        wa_head-tax = wa_vbrk-mwsbk.
+        IF strlen( wa_head-tax ) < 10.
+            PERFORM fill_currency USING wa_head-tax 10.
+        ENDIF.
+
+        "總計金額
+        wa_head-price_all = wa_vbrk-sum.
+        IF strlen( wa_head-price_all ) < 10.
+            PERFORM fill_currency USING wa_head-price_all 10.
+        ENDIF.
+
+        "受票人統一編號
+        IF wa_vbrk-zvatno IS NOT INITIAL.
+            wa_head-taxnumber = wa_vbrk-zvatno.
+        ELSE.
+            CLEAR wa_vbpa.
+            READ TABLE t_vbpa INTO wa_vbpa WITH KEY vbeln = wa_vbrk-vbeln parvw = 'RE'.
+            CLEAR wa_dfkkbptaxnum.
+            READ TABLE t_dfkkbptaxnum INTO wa_dfkkbptaxnum WITH KEY partner = wa_vbpa-kunnr taxtype = 'TW1'.
+            wa_head-taxnumber = wa_dfkkbptaxnum-taxnum.
+        ENDIF.
+
+        "受票人名稱
+        wa_head-name1 = wa_vbrk-name1.
+        "受票人登記地址
+        wa_head-addr1 = wa_vbrk-street.
+        "參考號一
+        wa_head-reference = wa_vbrk-bstkd.
+        "發票人統一編號
+        wa_head-rec_taxnumber = wa_vbrk-stcd1.
+        "發票人名稱
+        wa_head-rec_name = wa_vbrk-name2.
+        "發票人地址
+        wa_head-rec_addr = wa_vbrk-street2.
+        "發票方負責人
+        wa_head-rec_res = wa_vbrk-represn.
+        "發票方聯絡人
+        wa_head-rec_con = wa_vbrk-name3.
+
+        CLEAR wa_output.
+        CONCATENATE wa_head-record wa_head-format wa_head-no1 wa_head-no2 wa_head-recno
+        wa_head-xblnr wa_head-exam wa_head-rec_date wa_head-price wa_head-tax_rate wa_head-tax
+        wa_head-price_all wa_head-taxnumber wa_head-shop wa_head-name1 wa_head-addr1
+        wa_head-space1 wa_head-no3 wa_head-no4 wa_head-reference wa_head-no5 wa_head-space2
+        wa_head-space3 wa_head-space4 wa_head-space5 wa_head-rec_taxnumber wa_head-rec_man
+        wa_head-rec_name wa_head-rec_addr wa_head-rec_tel wa_head-rec_res wa_head-rec_con
+        wa_head-space6 wa_head-space7 wa_head-space8 INTO wa_output-line RESPECTING BLANKS.
+
+        APPEND wa_output TO t_output.
+        CLEAR wa_output.
+
+        CLEAR: wa_vbrp, wa_detail, w_count..
+        LOOP AT t_vbrp INTO wa_vbrp WHERE vbeln = wa_vbrk-vbeln.
+            "紀錄別
+            wa_detail-record = 'T2'.
+            "項次
+            w_count = w_count + 1.
+            w_n = wa_vbrp-number.
+            IF w_count < 10.
+                CONCATENATE '000' w_n INTO wa_detail-no.
+            ELSEIF w_count < 100.
+                CONCATENATE '00' w_n INTO wa_detail-no.
+            ELSEIF w_count < 1000.
+                CONCATENATE '0' w_n INTO wa_detail-no.
+            ENDIF.
+
+            "買方商品代號
+            wa_detail-b_product = wa_vbrp-ean11.
+            "賣方商品代號
+            wa_detail-s_product = wa_vbrp-matnr.
+            "商品條碼
+            wa_detail-product_no = wa_vbrp-ean11.
+            "品名
+            wa_detail-product_name = wa_vbrp-arktx.
+            "數量
+            wa_detail-quantity = wa_vbrp-fkimg.
+            IF strlen( wa_detail-quantity ) < 11 .
+                PERFORM fill_currency USING wa_detail-quantity 11.
+            ENDIF.
+            "單位
+            wa_detail-unit = wa_vbrp-mseh3.
+            "單價
+            wa_detail-netpr = wa_vbrp-netpr.
+            IF strlen( wa_detail-price ) < 15 .
+                PERFORM fill_currency USING wa_detail-price 15.
+            ENDIF.
+
+            "金額
+            PERFORM convert_number USING wa_vbrp-netwr wa_detail-price.
+*            wa_detail-price = wa_vbrp-netwr.
+            IF strlen( wa_detail-price ) < 12 .
+                PERFORM fill_currency USING wa_detail-price 12.
+            ENDIF.
+
+            CLEAR wa_output.
+            CONCATENATE wa_detail-record wa_detail-no wa_detail-b_product wa_detail-s_product
+            wa_detail-product_no wa_detail-product_name wa_detail-quantity wa_detail-unit
+            wa_detail-netpr wa_detail-price wa_detail-space1 INTO wa_output-line RESPECTING BLANKS.
+
+            APPEND wa_output TO t_output.
+            CLEAR wa_output.
+        ENDLOOP.
+
+
+        "成功的畫面資訊
+        CLEAR wa_msg.
+        w_suc = w_suc + 1.
+        wa_msg-vbeln = wa_vbrk-vbeln.
+        wa_msg-xblnr = wa_vbrk-xblnr.
+        wa_msg-type = 'S'.
+        APPEND wa_msg TO t_msg.
+
+        w_all = w_all + 1.
+    ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form print_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM print_data .
+    DATA: l_count TYPE i,
+          l_str   TYPE string,
+          l_num   TYPE i,
+          l_year(4).
+    FIELD-SYMBOLS: <field>.
+
+    CLEAR: l_count, l_str, l_num.
+
+    LOOP AT t_output INTO wa_output.
+        CLEAR: l_num.
+        w_len = strlen( wa_output-line ).
+        DO w_len TIMES.
+            w_index     = sy-index - 1.
+            wa_tab-line = wa_output-line+w_index(1).
+            l_str       = wa_tab-line.
+            IF wa_tab-line IS NOT INITIAL.
+                ASSIGN wa_tab-line TO <field>.
+                DESCRIBE FIELD <field> LENGTH l_count IN CHARACTER MODE .
+                l_count = l_count - cl_abap_list_utilities=>dynamic_output_length( l_str ).
+                IF l_count <> 0.
+                    ADD l_count TO l_num.
+                ENDIF.
+                APPEND wa_tab TO t_tab.
+            ELSE.
+                IF l_num >= 0.
+                    APPEND wa_tab TO t_tab.
+                ELSE.
+                    ADD 1 TO l_num.
+                ENDIF.
+            ENDIF.
+        ENDDO.
+        wa_tab-line = cl_abap_char_utilities=>cr_lf+0(1).
+        APPEND wa_tab TO t_tab.
+        wa_tab-line = cl_abap_char_utilities=>cr_lf+1(1).
+        APPEND wa_tab TO t_tab.
+    ENDLOOP.
+
+    CLEAR wa_tvko.
+    READ TABLE t_tvko INTO wa_tvko WITH KEY vkorg = s_vkorg-low.
+    CLEAR wa_j.
+    READ TABLE t_j INTO wa_j WITH KEY bukrs = wa_tvko-bukrs.
+    w_filename = wa_j-stcd1.
+*    READ TABLE t_tvko INTO wa_tvko WITH KEY vkorg =
+    l_year =  sy-datum+0(4) - 1911 .
+    CONCATENATE p_file '\O' '-' w_filename '-' l_year+1(2) sy-datum+4(4) sy-uzeit '.txt' INTO w_filepath.
+
+    CALL FUNCTION 'GUI_DOWNLOAD'
+      EXPORTING
+        filename                  = w_filepath
+        filetype                  = 'ASC'
+        write_lf                  = space  "do not append CR/LF
+        trunc_trailing_blanks     = space  "do not delete any blanks
+        trunc_trailing_blanks_eol = space  "do not delete any blanks
+      TABLES
+        data_tab                  = t_tab
+      EXCEPTIONS
+        file_write_error                = 1
+        no_batch                        = 2
+        gui_refuse_filetransfer         = 3
+        invalid_type                    = 4
+        no_authority                    = 5
+        unknown_error                   = 6
+        header_not_allowed              = 7
+        separator_not_allowed           = 8
+        filesize_not_allowed            = 9
+        header_too_long                 = 10
+        dp_error_create                 = 11
+        dp_error_send                   = 12
+        dp_error_write                  = 13
+        unknown_dp_error                = 14
+        access_denied                   = 15
+        dp_out_of_memory                = 16
+        disk_full                       = 17
+        dp_timeout                      = 18
+        file_not_found                  = 19
+        dataprovider_exception          = 20
+        control_flush_error             = 21
+         OTHERS                          = 22.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form fill_currency
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> WA_HEAD_PRICE_ALL
+*&---------------------------------------------------------------------*
+FORM fill_currency  USING  l_value l_count.
+    CLEAR w_n.
+    w_n = l_count - strlen( l_value ).
+    DO w_n TIMES.
+        CONCATENATE ' ' l_value INTO l_value RESPECTING BLANKS.
+    ENDDO.
+ENDFORM.
+FORM convert_number USING l_value l_target.
+    DATA: l_string TYPE string.
+
+    CLEAR l_string.
+    l_string = l_value.
+    CLEAR l_value.
+
+    CONDENSE l_string.
+    SHIFT l_string RIGHT DELETING TRAILING '0'.
+    SHIFT l_string RIGHT DELETING TRAILING '.'.
+
+    l_target = l_string.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  SELECT_DIR
+*&---------------------------------------------------------------------*
+FORM select_dir USING l_path.
+    DATA: l_dir TYPE string.
+    l_dir = l_path.
+    CALL METHOD cl_gui_frontend_services=>directory_browse
+      EXPORTING
+*        window_title         = '''
+        initial_folder       = 'C:\DATA'
+      CHANGING
+        selected_folder      = l_dir
+      EXCEPTIONS
+        cntl_error           = 1
+        error_no_gui         = 2
+        not_supported_by_gui = 3
+        OTHERS               = 4.
+    l_path = l_dir.
+ENDFORM.  " SELECT_DIR
