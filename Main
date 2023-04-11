@@ -1,9 +1,5 @@
-REPORT ZRSDSD525 MESSAGE-ID zsd.
+REPORT ZRSDSD MESSAGE-ID zsd.
 ***********************************************************************
-* Copyright    : Innatech Co., Ltd.
-* Program Name : ZRSDSD525
-* Author       : Paul Tsai
-* Create Date  : 2023/03/31
 * Description  : 家樂福發票匯出TXT
 ***********************************************************************
 INCLUDE zbdcrecx2.
