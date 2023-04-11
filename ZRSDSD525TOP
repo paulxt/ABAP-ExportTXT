@@ -1,0 +1,249 @@
+*&---------------------------------------------------------------------*
+*& INCLUDE          ZRSDSD525TOP
+*&---------------------------------------------------------------------*
+TABLES: vbrk, vbrp.
+
+DATA:
+      w_all TYPE i,
+      w_err TYPE i,
+      w_suc TYPE i,
+      w_fday TYPE datum,
+      w_lday TYPE datum,
+      w_temp TYPE dats,
+      w_count TYPE i,
+      w_n TYPE string,
+      w_filename TYPE string,
+      "輸出畫面
+      BEGIN OF wa_msg,
+        vbeln TYPE string,
+        posnr TYPE string,
+        xblnr TYPE vbrk-xblnr,
+        matnr TYPE string,
+        message TYPE string,
+        type TYPE c,
+      END OF wa_msg,
+      t_msg LIKE STANDARD TABLE OF wa_msg,
+      BEGIN OF wa_output,
+          line(1500),
+      END OF wa_output,
+      t_output LIKE STANDARD TABLE OF wa_output,
+      "匯出txt
+      BEGIN OF wa_tab,
+          line(1) TYPE c,
+      END OF wa_tab,
+      t_tab LIKE STANDARD TABLE OF wa_tab,
+      w_len TYPE i,
+      w_index TYPE i,
+      w_filepath TYPE string, "檔案儲存位置
+      w_codepage TYPE	abap_encoding.
+
+DATA: BEGIN OF wa_head,
+        record(2) TYPE c,                   "紀錄別
+        format(2) TYPE c,                   "格式代號
+        no1(1) TYPE c VALUE '1',            "扣抵代號
+        no2(1) TYPE c VALUE '1',            "發票種類
+        recno(1) TYPE c VALUE 'O',          "發票別
+        xblnr(10) TYPE c,                   "發票號碼
+        exam(7) TYPE c,                     "發票檢查碼
+        blank(1) TYPE c,
+        rec_date(8) TYPE c,                 "發票日期
+        price(12) TYPE c,                   "銷售金額
+        tax_rate(1) TYPE c,                 "稅率別 10
+        tax(10) TYPE c,                     "營業稅額
+        price_all(11) TYPE c,               "總計金額   銷售金額加稅
+        taxnumber(8) TYPE c,                "受票人統一編號
+        shop(13) TYPE c,                    "店名
+        name1(60) TYPE c,                   "受票人名稱
+        addr1(70) TYPE c,                   "受票人登記地址
+        space1(20) TYPE c,                  "受票人聯絡人
+        no3(1) TYPE c,                      "洋菸酒註記
+        no4(3) TYPE c VALUE 'PO ',          "參考文件代號
+        reference(20) TYPE c,               "參考號一 20
+        no5(3) TYPE c,                      "參考文件帶碼
+        space2(20) TYPE c,                  "操考號二
+        space3(12) TYPE c,                  "附加連結檔名
+        space4(100) TYPE c,                 "備註
+        space5(100) TYPE c,                 "保留欄位
+        rec_taxnumber(8) TYPE c,            "發票人統一編號
+        rec_man(13) TYPE c VALUE '4710200900012', "發票人
+        rec_name(60) TYPE c,                "發票人名稱
+        rec_addr(70) TYPE c,                "發票人地址
+        rec_tel(20) TYPE c,                 "發票人電話 30
+        rec_res(10) TYPE c,                 "發票方負責人
+        rec_con(20) TYPE c,                 "發票方聯絡人
+        space6(10) TYPE c,                  "網際網路傳輸發票核准單位
+        space7(8) TYPE c,                   "網際網路傳輸發票核准日期
+        space8(20) TYPE c,                  "網際網路傳輸發票核准
+      END OF wa_head,
+      t_head LIKE STANDARD TABLE OF wa_head.
+
+DATA: BEGIN OF wa_detail,
+        record(2) TYPE c VALUE 'T2',        "紀錄別
+        no(4) TYPE c,                       "項次
+        b_product(20) TYPE c,               "買方商品代號
+        s_product(20) TYPE c,               "賣方商品代號
+        product_no(20) TYPE c,              "商品條碼
+        product_name(70) TYPE c,            "品名
+        quantity(11) TYPE c,                "數量
+        unit(7) TYPE c,                     "單位
+        netpr(15) TYPE c,                   "單價
+        price(12) TYPE c,                   "金額
+        space1(40) TYPE c,                  "項目保留欄位
+      END OF wa_detail,
+      t_detail LIKE STANDARD TABLE OF wa_detail.
+
+
+DATA: BEGIN OF wa_vbrk,
+        fksto TYPE vbrk-fksto,
+        sfakn TYPE vbrk-sfakn,
+        waerk TYPE vbrk-waerk,
+        "表頭
+        vbeln TYPE vbrk-vbeln,
+        taxk1 TYPE vbrk-taxk1,      "2格式代號
+        xblnr TYPE vbrk-xblnr,      "6發票號碼
+        zrdcod TYPE vbrk-zrdcod,    "7發票檢查碼
+        fkdat TYPE vbrk-fkdat,      "8發票日期
+        netwr TYPE vbrk-netwr,      "9銷售金額
+        knumv TYPE vbrk-knumv,
+        mwsbk TYPE vbrk-mwsbk,      "10 稅率別  11 營業稅額
+        sum TYPE p,                 "12 10 + 11 總計金額
+        zvatno TYPE vbrk-zvatno,    "13 受票人統一編號
+        name1 TYPE adrc-name1,      "15 收受人名稱
+        street(110),                "16 受票人登記地址
+        aubel TYPE vbrp-aubel,
+        bstkd TYPE vbkd-bstkd,      "20 客戶參考
+        bupla TYPE vbrk-bupla,      "   營業處
+        stcd1 TYPE j_1bbranch-stcd1,"21 發票人統一編號
+        name2 TYPE adrc-name1,      "23 發票人名稱
+        street2(100),               "24 發票人地址
+        represn TYPE j_1bbranch-represn,  "26 發票方負責人
+        name3 TYPE adrc-name1,      "27 開票方聯絡人
+
+        "條件確認
+        sales TYPE vbpa-kunnr,
+        rec TYPE vbpa-kunnr,
+      END OF wa_vbrk,
+      t_vbrk LIKE STANDARD TABLE OF wa_vbrk.
+
+DATA: BEGIN OF wa_vbrp,
+        "明細
+        vbeln TYPE vbrp-vbeln,
+        posnr TYPE vbrp-posnr,
+        number TYPE i,
+        ean11 TYPE mara-ean11,        "3 買方商品代號, 5 商品條碼
+        matnr TYPE vbrp-matnr,        "4 賣方商品代號
+        arktx TYPE vbrp-arktx,        "6 品名
+        fkimg TYPE vbrp-fkimg,        "7數量
+        vrkme TYPE vbrp-vrkme,
+        mseh3 TYPE t006a-mseh3,       "8 單位
+        netpr TYPE p LENGTH 10 DECIMALS 5,        "9 單價 netwr / fkimg
+        netwr TYPE vbrp-netwr,        "10 金額
+        delete(1),
+      END OF wa_vbrp,
+      t_vbrp LIKE STANDARD TABLE OF wa_vbrp.
+
+"夥伴名稱地址
+DATA: BEGIN OF wa_adrc,
+        addrnumber TYPE adrc-addrnumber,
+        name1 TYPE adrc-name1,
+        post_code1 TYPE adrc-post_code1,
+        city1 TYPE adrc-city1,
+        street TYPE adrc-street,
+      END OF wa_adrc,
+      t_adrc LIKE STANDARD TABLE OF wa_adrc.
+
+"公司主檔
+DATA: BEGIN OF wa_t001,
+        bukrs TYPE t001-bukrs,
+        adrnr TYPE t001-adrnr,
+      END OF wa_t001,
+      t_t001 LIKE STANDARD TABLE OF wa_t001.
+
+"電話
+DATA: BEGIN OF wa_adr2,
+        addrnumber TYPE adr2-addrnumber,
+        tel_number TYPE adr2-tel_number,
+      END OF wa_adr2,
+      t_adr2 LIKE STANDARD TABLE OF wa_adr2.
+
+DATA: BEGIN OF wa_tvko,
+        vkorg TYPE tvko-vkorg,
+        bukrs TYPE tvko-bukrs,
+      END OF wa_tvko,
+      t_tvko LIKE STANDARD TABLE OF wa_tvko.
+
+"營業處
+DATA: BEGIN OF wa_j,
+        bukrs TYPE j_1bbranch-bukrs,
+        stcd1 TYPE j_1bbranch-stcd1,
+        represn TYPE j_1bbranch-represn,
+        adrnr TYPE j_1bbranch-adrnr,
+      END OF wa_j,
+      t_j LIKE STANDARD TABLE OF wa_j.
+
+"客戶參考
+DATA: BEGIN OF wa_vbkd,
+        vbeln TYPE vbkd-vbeln,
+        bstkd TYPE vbkd-bstkd,
+      END OF wa_vbkd,
+      t_vbkd LIKE STANDARD TABLE OF wa_vbkd.
+
+"條件
+DATA: BEGIN OF wa_prcd,
+        knumv TYPE prcd_elements-knumv,
+        kschl TYPE prcd_elements-kschl,
+        mwsk1 TYPE prcd_elements-mwsk1,
+      END OF wa_prcd,
+      t_prcd LIKE STANDARD TABLE OF wa_prcd.
+
+
+"夥伴 抓 RE發票收受人
+DATA: BEGIN OF wa_vbpa,
+        vbeln TYPE vbpa-vbeln,
+        parvw TYPE vbpa-parvw,  "RE
+        kunnr TYPE vbpa-kunnr,
+        adrnr TYPE vbpa-adrnr,
+      END OF wa_vbpa,
+      t_vbpa LIKE STANDARD TABLE OF wa_vbpa.
+
+"taxtype 抓TW1的txnum
+DATA: BEGIN OF wa_dfkkbptaxnum,
+        partner TYPE dfkkbptaxnum-partner,
+        taxtype TYPE dfkkbptaxnum-taxtype,
+        taxnum TYPE dfkkbptaxnum-taxnum,
+      END OF wa_dfkkbptaxnum,
+      t_dfkkbptaxnum LIKE STANDARD TABLE OF wa_dfkkbptaxnum.
+
+"物料
+DATA: BEGIN OF wa_mara,
+        matnr TYPE mara-matnr,
+        ean11 TYPE mara-ean11,
+      END OF wa_mara,
+      t_mara LIKE STANDARD TABLE OF wa_mara.
+
+"轉換單位
+DATA: BEGIN OF wa_t006a,
+        msehi TYPE t006a-msehi,
+        mseh3 TYPE t006a-mseh3,
+      END OF wa_t006a,
+      t_t006a LIKE STANDARD TABLE OF wa_t006a.
+
+***********************************************************************
+* Selection Screen / Option / Parameter
+***********************************************************************
+SELECT-OPTIONS: s_vkorg FOR vbrk-vkorg OBLIGATORY,
+                s_vtweg FOR vbrk-vtweg,
+                s_spart FOR vbrk-spart OBLIGATORY,
+                s_vkbur FOR vbrp-vkbur,
+                s_fkart FOR vbrk-fkart,
+                s_fkdat FOR vbrk-fkdat OBLIGATORY,
+                s_vbeln FOR vbrk-vbeln,
+                s_xblnr FOR vbrk-xblnr,
+                s_kunrg FOR vbrk-kunrg,
+                s_rec FOR vbrp-kunre_ana,
+                s_kunag FOR vbrk-kunag,
+                s_sales FOR vbrp-kunre_ana,
+                s_ernam FOR vbrk-ernam,
+                s_erdat FOR vbrk-erdat.
+
+PARAMETERS p_file TYPE localfile OBLIGATORY.
